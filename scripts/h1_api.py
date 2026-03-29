@@ -86,12 +86,20 @@ def api_request(method, path, data=None, retries=3):
         "Content-Type": "application/json"
     }
 
-    body = json.dumps(data).encode("utf-8") if data else None
+    # ensure_ascii=False preserves markdown characters properly
+    # json.dumps handles all necessary escaping (\n, \", \\, etc.)
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data else None
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
+
+    # Handle SSL on Windows (some versions need explicit context)
+    import ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = True
+    ctx.verify_mode = ssl.CERT_REQUIRED
 
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
                 return True, response_data
         except urllib.error.HTTPError as e:
@@ -226,7 +234,7 @@ def find_weakness_id(program_handle, cwe_or_name):
 
     for w in weaknesses:
         # Match by CWE number
-        ext_id = w["external_id"].lower().replace("cwe-", "")
+        ext_id = (w.get("external_id") or "").lower().replace("cwe-", "")
         if ext_id == cwe_lower:
             return w["id"], None
         # Match by name
@@ -258,16 +266,19 @@ def submit_report(program_handle, title, description, impact, severity="medium",
             print(f"Warning: Could not resolve CWE-{cwe}: {err}")
             print(f"  Weakness will not be set — you can set it manually on HackerOne after submission")
 
-    # Build payload — do NOT include structured_scope_id (causes 500 errors)
+    # Build payload
+    # NOTE: structured_scope_id is intentionally omitted — it causes HTTP 500 on some programs.
+    # The triager can set the scope on the web UI based on the asset mentioned in the report.
     attributes = {
         "team_handle": program_handle,
         "title": title,
         "vulnerability_information": description,
-        "impact": impact,
+        "impact": impact if impact else "See vulnerability description above for full impact details.",
         "severity_rating": severity
     }
+    # weakness_id MUST be included when resolved — it maps to the Weakness field on HackerOne
     if weakness_id:
-        attributes["weakness_id"] = weakness_id
+        attributes["weakness_id"] = int(weakness_id)
 
     payload = {
         "data": {
@@ -374,32 +385,21 @@ def submit_from_file(report_file, program_handle, dry_run=False):
     if asset_match:
         asset = asset_match.group(1)
 
-    # Build vulnerability_information from ALL content sections (preserving full markdown)
-    # This is the key fix: include EVERYTHING between Description and Impact,
-    # exactly as written in the .md file, with all markdown formatting intact.
+    # Build vulnerability_information: put EVERYTHING in this one field.
+    # The web UI puts description + steps + impact + everything into vulnerability_information.
+    # The good manual reports (#3635894, #3636250) have 0 chars in the separate impact field —
+    # everything is in vulnerability_information as one combined markdown document.
+
+    # Reconstruct the full markdown report from the .md file, skipping only metadata headers
+    metadata_sections = {"asset", "weakness", "severity", "title"}
     description_parts = []
 
-    # The main description
-    desc = sections_lower.get("description", "")
-    if desc:
-        description_parts.append(desc)
-
-    # Steps to reproduce (critical — this is what triagers verify)
-    steps = sections_lower.get("steps to reproduce", "")
-    if steps:
-        description_parts.append("## Steps to Reproduce\n\n" + steps)
-
-    # Any additional detail sections (schema, analysis, etc.)
-    skip_sections = {"asset", "weakness", "severity", "title", "description",
-                     "steps to reproduce", "impact", "remediation", "remediation (optional)"}
     for section_name, section_content in sections.items():
-        if section_name.lower() not in skip_sections and section_content:
-            description_parts.append(f"## {section_name}\n\n{section_content}")
-
-    # Remediation at the end
-    remediation = sections_lower.get("remediation", sections_lower.get("remediation (optional)", ""))
-    if remediation:
-        description_parts.append("## Remediation\n\n" + remediation)
+        if section_name.lower() in metadata_sections:
+            continue  # Skip metadata — these map to API fields, not description
+        if not section_content.strip():
+            continue
+        description_parts.append(f"## {section_name}\n\n{section_content}")
 
     full_description = "\n\n".join(description_parts)
 
@@ -410,20 +410,26 @@ def submit_from_file(report_file, program_handle, dry_run=False):
                 title = line[2:].strip()
                 break
 
+    # The impact field is REQUIRED by the API. If the impact is already in vulnerability_information
+    # (which it should be since we include all sections), use impact as a short summary.
+    # If impact section exists separately, use it; otherwise provide a default.
+    impact_for_api = impact if impact else "See the Impact section in the vulnerability description above."
+
     print(f"Parsed report: {os.path.basename(report_file)}")
     print(f"  Title: {title[:100]}")
     print(f"  Severity: {severity}")
     print(f"  CWE: {cwe}")
     print(f"  Asset: {asset}")
-    print(f"  Description: {len(full_description)} chars ({full_description.count(chr(10))} lines)")
-    print(f"  Impact: {len(impact)} chars")
+    print(f"  vulnerability_information: {len(full_description)} chars ({full_description.count(chr(10))} lines)")
+    print(f"  impact: {len(impact_for_api)} chars")
+    print(f"  Has code blocks: {'```' in full_description}")
+    print(f"  Has tables: {'|' in full_description and '---' in full_description}")
 
     if dry_run:
-        # Save the full payload to a file for review
         payload_file = report_file.replace(".md", "-payload.json")
         result_id, payload = submit_report(
             program_handle=program_handle, title=title,
-            description=full_description, impact=impact, severity=severity,
+            description=full_description, impact=impact_for_api, severity=severity,
             cwe=cwe, asset_identifier=asset, dry_run=True
         )
         with open(payload_file, "w", encoding="utf-8") as f:
@@ -434,7 +440,7 @@ def submit_from_file(report_file, program_handle, dry_run=False):
 
     return submit_report(
         program_handle=program_handle, title=title,
-        description=full_description, impact=impact, severity=severity,
+        description=full_description, impact=impact_for_api, severity=severity,
         cwe=cwe, asset_identifier=asset
     )
 
