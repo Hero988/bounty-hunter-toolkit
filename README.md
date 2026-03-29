@@ -1,6 +1,6 @@
 # Bounty Hunter Toolkit
 
-Scripts, references, payloads, and automation for the [bounty-hunter](https://github.com/gissu/bounty-hunter) Claude Code skill.
+Scripts, references, payloads, and automation for the [bounty-hunter](https://github.com/Hero988/bounty-hunter) Claude Code skill.
 
 ## What's Inside
 
@@ -20,7 +20,7 @@ templates/        Custom nuclei templates
 This toolkit is automatically cloned by the `bounty-hunter` skill. Manual install:
 
 ```bash
-git clone https://github.com/gissu/bounty-hunter-toolkit ~/.bounty-hunter-toolkit
+git clone https://github.com/Hero988/bounty-hunter-toolkit ~/.bounty-hunter-toolkit
 ```
 
 ## Setup
