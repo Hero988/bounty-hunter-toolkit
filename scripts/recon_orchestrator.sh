@@ -158,6 +158,74 @@ else
 fi
 
 # ============================================================
+# PHASE 4.5: Geo-Restriction Detection
+# ============================================================
+log "=== Phase 4.5: Geo-Restriction Detection ==="
+
+GEO_BLOCKED="${OUTPUT_DIR}/recon/geo-blocked.txt"
+GEO_REPORT="${OUTPUT_DIR}/recon/geo-report.md"
+touch "${GEO_BLOCKED}"
+
+if [ -f "${LIVE_JSON}" ]; then
+    python -c "
+import json
+blocked = []
+for line in open('${LIVE_JSON}'):
+    try:
+        d = json.loads(line)
+        url = d.get('url', '')
+        status = d.get('status_code', 0)
+        title = d.get('title', '').lower()
+        body = d.get('body', '').lower() if 'body' in d else ''
+        # Detect geo-blocking patterns
+        geo_indicators = ['access denied', 'not available in your', 'region', 'geo', 'country',
+                          'restricted', 'akamai', 'cloudfront', 'blocked']
+        if status == 403 and any(g in title or g in body for g in geo_indicators):
+            blocked.append(url)
+            print(url)
+        elif status == 403 and not title:
+            # Bare 403 with no title often means WAF geo-block
+            blocked.append(url)
+            print(url)
+    except: pass
+" > "${GEO_BLOCKED}" 2>/dev/null || true
+
+    GEO_COUNT=$(wc -l < "${GEO_BLOCKED}" 2>/dev/null || echo 0)
+    LIVE_COUNT=$(wc -l < "${LIVE_HOSTS}" 2>/dev/null || echo 0)
+
+    if [ "${GEO_COUNT}" -gt 0 ]; then
+        log "[WARNING] ${GEO_COUNT} targets appear GEO-BLOCKED (403 Access Denied)"
+
+        # Get current IP info
+        MY_IP=$(curl -s https://ipinfo.io/json 2>/dev/null || echo '{}')
+        MY_COUNTRY=$(echo "${MY_IP}" | python -c "import sys,json; print(json.load(sys.stdin).get('country','unknown'))" 2>/dev/null || echo "unknown")
+
+        cat > "${GEO_REPORT}" <<GEOEOF
+# Geo-Restriction Report
+
+## Warning: ${GEO_COUNT} of ${LIVE_COUNT} targets returned 403 (likely geo-blocked)
+
+**Your current IP country:** ${MY_COUNTRY}
+
+## Blocked Targets
+$(cat "${GEO_BLOCKED}")
+
+## Recommended Actions
+1. **Prioritize non-blocked targets and mobile APK analysis** (APK analysis bypasses geo-restrictions)
+2. If you need access to blocked targets, use a **cloud VPS with a real IP** in the target region:
+   - GCP: asia-south1 (Mumbai), us-central1, europe-west1
+   - AWS: ap-south-1 (Mumbai), us-east-1, eu-west-1
+   - DigitalOcean: Bangalore, NYC, London
+3. **WARNING:** "Virtual" VPN servers (e.g., NordVPN "India - Virtual") route through other countries and will NOT bypass geo-restrictions. Use VPN providers with physical servers in the target country, or use a cloud VPS.
+4. **Alternative:** If the target has a mobile app, APK analysis often reveals API endpoints that can be accessed directly without geo-restrictions.
+GEOEOF
+        log "Geo report saved: ${GEO_REPORT}"
+    else
+        log "No geo-blocked targets detected"
+    fi
+fi
+
+# ============================================================
 # PHASE 5: Port Scanning
 # ============================================================
 log "=== Phase 5: Port Scanning ==="

@@ -92,17 +92,31 @@ def parse_raw_domain(domain):
 def generate_fetch_instructions(platform, url, program_handle):
     """Generate instructions for Claude to fetch and parse scope."""
     instructions = {
-        "hackerone": f"""## Scope Fetch Instructions
+        "hackerone": f"""## Scope Fetch Instructions (HackerOne)
 
-Use WebFetch to retrieve the program page and extract scope information:
+**PRIMARY METHOD — GraphQL API (more reliable than WebFetch, no JS rendering needed):**
 
-1. Fetch the program page: `{url}`
-2. Look for the "Scope" or "Policy" section
-3. Extract ALL in-scope assets (domains, wildcards, IPs, APIs)
-4. Extract ALL out-of-scope assets
-5. Extract the bounty table (severity -> reward range)
-6. Extract excluded vulnerability types (e.g., "self-XSS", "rate limiting")
-7. Note any special program rules
+Run this curl command to fetch structured scope data directly:
+```bash
+curl -s 'https://hackerone.com/graphql' \\
+  -H 'Content-Type: application/json' \\
+  -d '{{"query":"query {{team(handle:\\"{program_handle}\\"){{name handle policy structured_scopes(first:100){{edges{{node{{asset_identifier asset_type eligible_for_bounty eligible_for_submission max_severity instruction}}}}}}}}}}"}}'
+```
+
+Parse the JSON response to build scope.json. Each `node` in `structured_scopes.edges` contains:
+- `asset_identifier`: The domain/URL/app (e.g., "*.example.com")
+- `asset_type`: URL, CIDR, GOOGLE_PLAY_APP_ID, OTHER, etc.
+- `eligible_for_bounty`: true/false
+- `max_severity`: critical, high, medium, low
+- `instruction`: Special notes for this asset
+
+**FALLBACK — WebFetch (if GraphQL fails):**
+
+Use WebFetch to retrieve: `{url}`
+Look for the "Scope" or "Policy" section and extract all assets manually.
+
+**IMPORTANT:** If asset_type is GOOGLE_PLAY_APP_ID, note the package name — this means
+mobile APK analysis is in scope and should be prioritized (Phase 3.5).
 
 Then use the scope_parser.py --from-json command to create scope.json from the extracted data.
 
@@ -114,7 +128,8 @@ Example scope.json structure:
   "program_url": "{url}",
   "in_scope": [
     {{"identifier": "*.example.com", "type": "URL", "bounty": true, "max_severity": "critical"}},
-    {{"identifier": "api.example.com", "type": "API", "bounty": true, "max_severity": "critical"}}
+    {{"identifier": "api.example.com", "type": "API", "bounty": true, "max_severity": "critical"}},
+    {{"identifier": "com.example.app", "type": "GOOGLE_PLAY_APP_ID", "bounty": true, "max_severity": "critical"}}
   ],
   "out_of_scope": [
     {{"identifier": "blog.example.com", "type": "URL"}},

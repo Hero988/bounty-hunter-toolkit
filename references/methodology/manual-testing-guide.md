@@ -342,3 +342,33 @@ Craft input that makes AI produce: '; DROP TABLE users;--
 - You have spent 2x the time budget
 - The feature has strong security controls that you cannot bypass after reasonable effort
 - Switch to a different feature or target
+
+---
+
+## Token Validation (after APK/Mobile Analysis)
+
+**This is one of the highest-ROI activities.** Hardcoded tokens from APKs frequently bypass WAF/geo-restrictions and provide direct API access.
+
+For EVERY hardcoded token, API key, or credential found in APK analysis:
+
+1. **Identify the token type** — Bearer token, API key, Firebase key, Sentry DSN, OAuth client secret
+2. **Test against discovered API endpoints**:
+   - Use the endpoints extracted from Retrofit/OkHttp interfaces in the APK
+   - Try: `curl -H "Authorization: Bearer <token>" https://api.target.com/v1/user`
+   - Try with mobile User-Agent: `-H "User-Agent: okhttp/4.x"` or the app's actual UA
+3. **Check if it bypasses WAF/geo-restrictions**:
+   - Tokens from APKs often work even when the web UI is geo-blocked
+   - The mobile API may have different WAF rules than the web frontend
+4. **Document data access** — For each working token, record:
+   - What endpoints respond successfully
+   - What data is returned (PII, internal data, other users' data)
+   - Read-only vs read-write access
+   - Whether the token can access other users' data (IDOR)
+5. **Check token scope and expiry**:
+   - Is this a static/hardcoded key (never expires)?
+   - Can it be used to generate new tokens?
+   - Does it have admin/elevated privileges?
+6. **Severity assessment**:
+   - Static API key exposing PII → High/Critical
+   - Debug token with elevated access → Critical
+   - Expired or rate-limited key → Low/Informative

@@ -194,6 +194,20 @@ def check_scope(target, scope_data):
     return False, f"OUT OF SCOPE: {hostname} does not match any in-scope entry"
 
 
+def is_specific_urls_only(scope_data):
+    """
+    Detect if program scope is "specific URLs only" (no wildcards).
+    Returns: (is_specific: bool, in_scope_urls: list)
+    """
+    in_scope = scope_data.get("in_scope", [])
+    has_wildcard = any("*" in entry.get("identifier", "") for entry in in_scope)
+    has_cidr = any("/" in entry.get("identifier", "") and not entry.get("identifier", "").startswith("http") for entry in in_scope)
+    if not has_wildcard and not has_cidr and in_scope:
+        urls = [entry.get("identifier", "") for entry in in_scope if entry.get("identifier")]
+        return True, urls
+    return False, []
+
+
 def check_vuln_type(vuln_type, scope_data):
     """Check if a vulnerability type is excluded by the program."""
     excluded = scope_data.get("excluded_vuln_types", [])
@@ -209,6 +223,7 @@ def main():
     if len(sys.argv) < 3:
         print("Usage: scope_guard.py <scope.json> <target> [target2 ...]")
         print("       scope_guard.py <scope.json> --check-vuln <vuln_type>")
+        print("       scope_guard.py <scope.json> --scope-type")
         sys.exit(1)
 
     scope_path = sys.argv[1]
@@ -216,6 +231,19 @@ def main():
 
     if not scope_data:
         sys.exit(1)
+
+    if sys.argv[2] == "--scope-type":
+        specific, urls = is_specific_urls_only(scope_data)
+        if specific:
+            print("SCOPE_TYPE=specific_urls")
+            print(f"SKIP_SUBDOMAIN_ENUM=true")
+            print(f"IN_SCOPE_URLS={len(urls)}")
+            for u in urls:
+                print(f"  {u}")
+        else:
+            print("SCOPE_TYPE=wildcard_or_cidr")
+            print("SKIP_SUBDOMAIN_ENUM=false")
+        sys.exit(0)
 
     if sys.argv[2] == "--check-vuln":
         if len(sys.argv) < 4:

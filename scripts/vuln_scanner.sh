@@ -88,6 +88,34 @@ else
 fi
 
 # ============================================================
+# PHASE 1.5: WAF Detection
+# ============================================================
+log "=== Phase 1.5: WAF Detection ==="
+
+WAF_DETECTED=""
+if [ -f "${TECH_PROFILE}" ]; then
+    WAF_DETECTED=$(python -c "
+wafs = ['akamai', 'cloudflare', 'cloudfront', 'incapsula', 'imperva', 'sucuri',
+        'f5', 'barracuda', 'fortiweb', 'modsecurity', 'aws waf', 'azure front door']
+with open('${TECH_PROFILE}', errors='ignore') as f:
+    content = f.read().lower()
+found = [w for w in wafs if w in content]
+if found: print(','.join(found))
+" 2>/dev/null || echo "")
+fi
+
+if [ -n "${WAF_DETECTED}" ]; then
+    log "[INFO] WAF detected: ${WAF_DETECTED}"
+    log "[INFO] Adjusting scan: skipping noisy active probes, using passive/header-based checks"
+    # Lower rate limit for WAF-protected targets
+    RATE_LIMIT=$((RATE_LIMIT / 2))
+    if [ "${RATE_LIMIT}" -lt 10 ]; then RATE_LIMIT=10; fi
+    log "[INFO] Rate limit reduced to ${RATE_LIMIT} for WAF evasion"
+else
+    log "No WAF detected"
+fi
+
+# ============================================================
 # PHASE 2: Nuclei Scanning (Layered Approach)
 # ============================================================
 
