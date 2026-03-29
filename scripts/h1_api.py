@@ -122,24 +122,39 @@ def api_request(method, path, data=None, retries=3):
 # ============================================================
 
 def get_structured_scopes(program_handle):
-    """Fetch structured scopes for a program. Returns list of scope items."""
-    success, data = api_request("GET", f"/hackers/programs/{program_handle}/structured_scopes")
-    if not success:
-        return None, data
+    """Fetch ALL structured scopes for a program (handles pagination)."""
+    all_scopes = []
+    page = 1
+    while True:
+        success, data = api_request("GET", f"/hackers/programs/{program_handle}/structured_scopes?page[number]={page}&page[size]=100")
+        if not success:
+            if all_scopes:
+                break  # Return what we have
+            return None, data
 
-    scopes = []
-    for item in data.get("data", []):
-        attrs = item.get("attributes", {})
-        scopes.append({
-            "id": item.get("id"),
-            "asset_identifier": attrs.get("asset_identifier", ""),
-            "asset_type": attrs.get("asset_type", ""),
-            "eligible_for_bounty": attrs.get("eligible_for_bounty", False),
-            "eligible_for_submission": attrs.get("eligible_for_submission", True),
-            "max_severity": attrs.get("max_severity", ""),
-            "instruction": attrs.get("instruction", "")
-        })
-    return scopes, None
+        items = data.get("data", [])
+        if not items:
+            break
+
+        for item in items:
+            attrs = item.get("attributes", {})
+            all_scopes.append({
+                "id": item.get("id"),
+                "asset_identifier": attrs.get("asset_identifier", ""),
+                "asset_type": attrs.get("asset_type", ""),
+                "eligible_for_bounty": attrs.get("eligible_for_bounty", False),
+                "eligible_for_submission": attrs.get("eligible_for_submission", True),
+                "max_severity": attrs.get("max_severity", ""),
+                "instruction": attrs.get("instruction", "")
+            })
+
+        # Check for next page
+        next_link = data.get("links", {}).get("next")
+        if not next_link or len(items) < 100:
+            break
+        page += 1
+
+    return all_scopes, None
 
 
 def find_scope_id(program_handle, asset_identifier):
@@ -170,21 +185,35 @@ def find_scope_id(program_handle, asset_identifier):
 
 
 def get_weaknesses(program_handle):
-    """Fetch available weaknesses (CWEs) for a program."""
-    success, data = api_request("GET", f"/hackers/programs/{program_handle}/weaknesses")
-    if not success:
-        return None, data
+    """Fetch ALL available weaknesses/CWEs for a program (handles pagination)."""
+    all_weaknesses = []
+    page = 1
+    while True:
+        success, data = api_request("GET", f"/hackers/programs/{program_handle}/weaknesses?page[number]={page}&page[size]=100")
+        if not success:
+            if all_weaknesses:
+                break
+            return None, data
 
-    weaknesses = []
-    for item in data.get("data", []):
-        attrs = item.get("attributes", {})
-        weaknesses.append({
-            "id": int(item.get("id", 0)),
-            "name": attrs.get("name", ""),
-            "description": attrs.get("description", ""),
-            "external_id": attrs.get("external_id", "")
-        })
-    return weaknesses, None
+        items = data.get("data", [])
+        if not items:
+            break
+
+        for item in items:
+            attrs = item.get("attributes", {})
+            all_weaknesses.append({
+                "id": int(item.get("id", 0)),
+                "name": attrs.get("name", ""),
+                "description": attrs.get("description", ""),
+                "external_id": attrs.get("external_id", "")
+            })
+
+        next_link = data.get("links", {}).get("next")
+        if not next_link or len(items) < 100:
+            break
+        page += 1
+
+    return all_weaknesses, None
 
 
 def find_weakness_id(program_handle, cwe_or_name):
@@ -212,41 +241,24 @@ def find_weakness_id(program_handle, cwe_or_name):
 # ============================================================
 
 def submit_report(program_handle, title, description, impact, severity="medium",
-                  weakness_id=None, scope_id=None, asset_identifier=None,
-                  cwe=None):
+                  weakness_id=None, asset_identifier=None, cwe=None, dry_run=False):
     """
     Submit a report to HackerOne.
 
-    Args:
-        program_handle: Program handle (e.g., "x")
-        title: Report title
-        description: Full vulnerability description + steps to reproduce
-        impact: Impact statement
-        severity: none/low/medium/high/critical
-        weakness_id: Direct weakness ID (optional, auto-resolved from cwe)
-        scope_id: Direct scope ID (optional, auto-resolved from asset_identifier)
-        asset_identifier: Asset name to auto-resolve scope ID
-        cwe: CWE number to auto-resolve weakness ID
+    NOTE: structured_scope_id is NOT sent — it causes HTTP 500 errors on HackerOne's API.
+    The asset is identified by title/description instead. Triagers can set the scope manually.
     """
     # Auto-resolve weakness_id from CWE
     if not weakness_id and cwe:
         wid, err = find_weakness_id(program_handle, str(cwe))
         if wid:
             weakness_id = wid
-            print(f"Resolved CWE-{cwe} → weakness_id={wid}")
+            print(f"Resolved CWE-{cwe} -> weakness_id={wid}")
         else:
             print(f"Warning: Could not resolve CWE-{cwe}: {err}")
+            print(f"  Weakness will not be set — you can set it manually on HackerOne after submission")
 
-    # Auto-resolve scope_id from asset
-    if not scope_id and asset_identifier:
-        sid, err = find_scope_id(program_handle, asset_identifier)
-        if sid:
-            scope_id = sid
-            print(f"Resolved {asset_identifier} → scope_id={sid}")
-        else:
-            print(f"Warning: Could not resolve scope for {asset_identifier}: {err}")
-
-    # Build payload
+    # Build payload — do NOT include structured_scope_id (causes 500 errors)
     attributes = {
         "team_handle": program_handle,
         "title": title,
@@ -256,8 +268,6 @@ def submit_report(program_handle, title, description, impact, severity="medium",
     }
     if weakness_id:
         attributes["weakness_id"] = weakness_id
-    if scope_id:
-        attributes["structured_scope_id"] = scope_id
 
     payload = {
         "data": {
@@ -266,13 +276,20 @@ def submit_report(program_handle, title, description, impact, severity="medium",
         }
     }
 
-    print(f"\nSubmitting report to {program_handle}...")
-    print(f"  Title: {title}")
+    print(f"\n{'[DRY RUN] ' if dry_run else ''}Report submission summary:")
+    print(f"  Program: {program_handle}")
+    print(f"  Title: {title[:100]}")
     print(f"  Severity: {severity}")
-    if weakness_id:
-        print(f"  Weakness ID: {weakness_id}")
-    if scope_id:
-        print(f"  Scope ID: {scope_id}")
+    print(f"  Weakness ID: {weakness_id or 'not set'}")
+    print(f"  Description: {len(description)} chars")
+    print(f"  Impact: {len(impact)} chars")
+    if asset_identifier:
+        print(f"  Asset (in title/description): {asset_identifier}")
+
+    if dry_run:
+        # Save payload for inspection
+        print(f"\n[DRY RUN] Payload saved — review before submitting with --confirm")
+        return "DRY_RUN", payload
 
     success, data = api_request("POST", "/hackers/reports", payload)
 
@@ -289,12 +306,27 @@ def submit_report(program_handle, title, description, impact, severity="medium",
         return None, data
 
 
-def submit_from_file(report_file, program_handle):
-    """Parse a report .md file and submit it via API."""
-    with open(report_file) as f:
+def submit_from_file(report_file, program_handle, dry_run=False):
+    """
+    Parse a report .md file and submit it via API.
+
+    The .md file follows this structure (matching HackerOne form fields):
+    ## Asset — maps to asset context in description
+    ## Weakness — CWE number, auto-resolved to weakness_id
+    ## Severity — rating extracted (critical/high/medium/low)
+    ## Title — report title
+    ## Description — vulnerability_information field
+    ## Steps to Reproduce — appended to vulnerability_information
+    ## Complete Schema Discovered (or similar) — appended to vulnerability_information
+    ## Impact — impact field
+    ## Remediation — appended to vulnerability_information
+    """
+    import re
+
+    with open(report_file, encoding="utf-8", errors="replace") as f:
         content = f.read()
 
-    # Parse the markdown report
+    # Parse the markdown report into sections
     sections = {}
     current_section = None
     current_content = []
@@ -303,22 +335,25 @@ def submit_from_file(report_file, program_handle):
         if line.startswith("## "):
             if current_section:
                 sections[current_section] = "\n".join(current_content).strip()
-            current_section = line[3:].strip().lower()
+            current_section = line[3:].strip()
             current_content = []
+        elif line.startswith("# ") and not current_section:
+            # Skip the H1 header (e.g., "# HackerOne Report - Finding A")
+            continue
         else:
             current_content.append(line)
     if current_section:
         sections[current_section] = "\n".join(current_content).strip()
 
-    # Extract fields
-    title = sections.get("title", "")
-    description = sections.get("description", "")
-    steps = sections.get("steps to reproduce", "")
-    impact = sections.get("impact", "")
-    weakness_line = sections.get("weakness", "")
-    severity_line = sections.get("severity", "")
-    asset_line = sections.get("asset", "")
-    remediation = sections.get("remediation", sections.get("remediation (optional)", ""))
+    # Build a case-insensitive lookup
+    sections_lower = {k.lower(): v for k, v in sections.items()}
+
+    # Extract metadata fields
+    title = sections_lower.get("title", "")
+    weakness_line = sections_lower.get("weakness", "")
+    severity_line = sections_lower.get("severity", "")
+    asset_line = sections_lower.get("asset", "")
+    impact = sections_lower.get("impact", "")
 
     # Parse severity
     severity = "medium"
@@ -329,7 +364,6 @@ def submit_from_file(report_file, program_handle):
 
     # Parse CWE
     cwe = None
-    import re
     cwe_match = re.search(r"CWE-(\d+)", weakness_line)
     if cwe_match:
         cwe = cwe_match.group(1)
@@ -340,36 +374,68 @@ def submit_from_file(report_file, program_handle):
     if asset_match:
         asset = asset_match.group(1)
 
-    # Combine description + steps + remediation
-    full_description = description
-    if steps:
-        full_description += "\n\n## Steps to Reproduce\n" + steps
-    if remediation:
-        full_description += "\n\n## Remediation\n" + remediation
+    # Build vulnerability_information from ALL content sections (preserving full markdown)
+    # This is the key fix: include EVERYTHING between Description and Impact,
+    # exactly as written in the .md file, with all markdown formatting intact.
+    description_parts = []
 
+    # The main description
+    desc = sections_lower.get("description", "")
+    if desc:
+        description_parts.append(desc)
+
+    # Steps to reproduce (critical — this is what triagers verify)
+    steps = sections_lower.get("steps to reproduce", "")
+    if steps:
+        description_parts.append("## Steps to Reproduce\n\n" + steps)
+
+    # Any additional detail sections (schema, analysis, etc.)
+    skip_sections = {"asset", "weakness", "severity", "title", "description",
+                     "steps to reproduce", "impact", "remediation", "remediation (optional)"}
+    for section_name, section_content in sections.items():
+        if section_name.lower() not in skip_sections and section_content:
+            description_parts.append(f"## {section_name}\n\n{section_content}")
+
+    # Remediation at the end
+    remediation = sections_lower.get("remediation", sections_lower.get("remediation (optional)", ""))
+    if remediation:
+        description_parts.append("## Remediation\n\n" + remediation)
+
+    full_description = "\n\n".join(description_parts)
+
+    # If title is empty, try the H1 header
     if not title:
-        # Try to get title from first H1
         for line in content.split("\n"):
-            if line.startswith("# ") and "finding" not in line.lower():
+            if line.startswith("# ") and "finding" not in line.lower() and "report" not in line.lower():
                 title = line[2:].strip()
                 break
 
     print(f"Parsed report: {os.path.basename(report_file)}")
-    print(f"  Title: {title[:80]}")
+    print(f"  Title: {title[:100]}")
     print(f"  Severity: {severity}")
     print(f"  CWE: {cwe}")
     print(f"  Asset: {asset}")
-    print(f"  Description: {len(full_description)} chars")
+    print(f"  Description: {len(full_description)} chars ({full_description.count(chr(10))} lines)")
     print(f"  Impact: {len(impact)} chars")
 
+    if dry_run:
+        # Save the full payload to a file for review
+        payload_file = report_file.replace(".md", "-payload.json")
+        result_id, payload = submit_report(
+            program_handle=program_handle, title=title,
+            description=full_description, impact=impact, severity=severity,
+            cwe=cwe, asset_identifier=asset, dry_run=True
+        )
+        with open(payload_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        print(f"  Payload saved to: {payload_file}")
+        print(f"\n  To submit for real: h1_api.py --submit {report_file} {program_handle} --confirm")
+        return "DRY_RUN", None
+
     return submit_report(
-        program_handle=program_handle,
-        title=title,
-        description=full_description,
-        impact=impact,
-        severity=severity,
-        cwe=cwe,
-        asset_identifier=asset
+        program_handle=program_handle, title=title,
+        description=full_description, impact=impact, severity=severity,
+        cwe=cwe, asset_identifier=asset
     )
 
 
@@ -454,14 +520,18 @@ def main():
         print("Usage:")
         print("  h1_api.py --setup <identifier> <token>           # Save API credentials")
         print("  h1_api.py --test                                  # Test API connection")
-        print("  h1_api.py --scopes <program>                     # List program scopes")
-        print("  h1_api.py --weaknesses <program>                 # List program weaknesses")
+        print("  h1_api.py --scopes <program>                     # List program scopes with IDs")
+        print("  h1_api.py --weaknesses <program>                 # List ALL program weaknesses")
         print("  h1_api.py --find-scope <program> <asset>         # Find scope ID for asset")
         print("  h1_api.py --find-weakness <program> <cwe>        # Find weakness ID for CWE")
-        print("  h1_api.py --submit <report.md> <program>         # Submit report from .md file")
+        print("  h1_api.py --submit <report.md> <program>         # DRY RUN: preview submission (safe)")
+        print("  h1_api.py --submit <report.md> <program> --confirm  # ACTUALLY submit (irreversible!)")
         print("  h1_api.py --status <report_id>                   # Check report status")
         print("  h1_api.py --my-reports                            # List your reports")
-        print("  h1_api.py --hacktivity <program> [query]         # Search hacktivity")
+        print("  h1_api.py --hacktivity <program> [query]         # Search hacktivity for dedup")
+        print("")
+        print("IMPORTANT: --submit without --confirm is a dry run. It parses the report,")
+        print("resolves CWE/scope IDs, and saves the payload for review. Only --confirm sends it.")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -523,11 +593,19 @@ def main():
 
     elif cmd == "--submit":
         if len(sys.argv) < 4:
-            print("Usage: h1_api.py --submit <report.md> <program>")
+            print("Usage: h1_api.py --submit <report.md> <program> [--confirm]")
+            print("  Without --confirm: dry run (safe, saves payload for review)")
+            print("  With --confirm: ACTUALLY submits (irreversible!)")
             sys.exit(1)
         report_file = sys.argv[2]
         program = sys.argv[3]
-        report_id, err = submit_from_file(report_file, program)
+        confirm = "--confirm" in sys.argv
+        if not confirm:
+            print("=" * 60)
+            print("  DRY RUN MODE (safe — nothing will be submitted)")
+            print("  Add --confirm to actually submit")
+            print("=" * 60)
+        report_id, err = submit_from_file(report_file, program, dry_run=not confirm)
         if err:
             sys.exit(1)
 
