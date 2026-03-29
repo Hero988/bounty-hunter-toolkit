@@ -361,11 +361,45 @@ def main():
     print()
 
     # Wordlists
-    print("[6/6] Checking wordlists...")
+    print("[6/7] Checking wordlists...")
     if not skip_wordlists:
         download_wordlists()
     else:
         print("  [SKIP] Wordlist download skipped")
+    print()
+
+    # OWASP ZAP
+    print("[7/7] Checking OWASP ZAP...")
+    zap_path = shutil.which("zap.sh") or shutil.which("zap")
+    docker_path = shutil.which("docker")
+    if zap_path:
+        print(f"  [OK] ZAP found: {zap_path}")
+    elif docker_path:
+        print(f"  [OK] Docker found — ZAP can run via: docker run -d -p 8090:8090 owasp/zap2docker-stable zap.sh -daemon -host 0.0.0.0 -port 8090")
+        if install_missing:
+            print("  Pulling ZAP Docker image...")
+            success, output = run_cmd("docker pull owasp/zap2docker-stable", timeout=300)
+            if success:
+                print("  [OK] ZAP Docker image pulled")
+            else:
+                print(f"  [WARN] Docker pull failed: {output[:100]}")
+    else:
+        print("  [--] ZAP not found. Install options:")
+        if IS_WINDOWS:
+            print("       Download: https://www.zaproxy.org/download/")
+            print("       Or install Docker Desktop: https://www.docker.com/products/docker-desktop/")
+        elif PLATFORM == "linux":
+            print("       Run: sudo snap install zaproxy --classic")
+            print("       Or: sudo apt install zaproxy")
+            print("       Or: docker pull owasp/zap2docker-stable")
+        else:
+            print("       Run: brew install --cask zap")
+            print("       Or: docker pull owasp/zap2docker-stable")
+    # Install zaproxy Python client
+    success, _ = run_cmd(f"{PYTHON_CMD} -c \"import zapv2\" 2>/dev/null")
+    if not success:
+        print("  Installing zaproxy Python client...")
+        run_cmd(f"{PIP_CMD} install zaproxy --quiet", timeout=60)
     print()
 
     # Save state

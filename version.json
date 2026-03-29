@@ -1,9 +1,10 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "bounty-hunter-toolkit",
   "description": "Bug bounty hunting toolkit - scripts, references, and payloads",
   "updated": "2026-03-29",
   "changelog": [
+    "1.2.0 - OWASP ZAP integration, HackerOne API submission, auto-authentication, Bounty Probability Gate",
     "1.1.0 - Meesho engagement improvements: APK analysis phase, geo-restriction detection, HackerOne GraphQL scope parsing, WAF-aware scanning, token validation workflow, wayback URL analyzer, specific-URL scope handling",
     "1.0.0 - Initial release: 8-phase pipeline, 20+ vuln classes, 4 platform support"
   ]
