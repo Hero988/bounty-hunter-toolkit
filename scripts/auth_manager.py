@@ -282,6 +282,60 @@ def find_apk_tokens(hunt_dir):
 # Layer 4: curl cookie jar with provided credentials
 # ============================================================
 
+def open_browser(url):
+    """Open a URL in the user's default browser (not Playwright)."""
+    import webbrowser
+    try:
+        webbrowser.open(url)
+        return True
+    except Exception:
+        # Fallback to OS-specific commands
+        if IS_WINDOWS:
+            run_cmd(f'start "" "{url}"')
+        elif platform.system().lower() == "darwin":
+            run_cmd(f'open "{url}"')
+        else:
+            run_cmd(f'xdg-open "{url}"')
+        return True
+
+
+def parse_cookie_header(cookie_header_string, domain=""):
+    """
+    Parse a raw Cookie header string (from browser Network tab) into structured cookies.
+    This is the most reliable method — Network tab includes HttpOnly cookies that
+    document.cookie and browser_cookie3 miss.
+    """
+    cookies = []
+    # Clean up the string
+    header = cookie_header_string.strip()
+    if header.lower().startswith("cookie:"):
+        header = header[7:].strip()
+
+    # Split on '; ' (semicolon + space)
+    pairs = header.split("; ")
+    for pair in pairs:
+        pair = pair.strip()
+        if "=" not in pair:
+            continue
+        name, value = pair.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name:
+            continue
+        cookies.append({
+            "name": name,
+            "value": value,
+            "domain": f".{domain}" if domain else "",
+            "path": "/",
+            "secure": True,
+            "httpOnly": name.lower() in ("sso", "sso-rw", "sid", "session", "sessionid",
+                                          "connect.sid", "phpsessid", "jsessionid",
+                                          "cf_clearance", "__cf_bm"),
+            "source": "network_tab_paste"
+        })
+    return cookies
+
+
 def curl_login(login_url, username, password, cookie_file, extra_data=None):
     """Attempt login via curl and save cookies."""
     data = extra_data or f"username={username}&password={password}"
@@ -379,36 +433,27 @@ def auto_authenticate(target_domain, hunt_dir, output_dir=None):
         print(f"[AUTH] Found {len(tokens)} tokens from APK analysis")
         # Don't mark as full success — APK tokens supplement but may not provide full auth
 
-    # Layer 2: Playwright (if available)
-    print("[AUTH] Layer 2: Checking Playwright availability...")
-    if check_playwright_installed():
-        results["layers_tried"].append({"layer": 2, "method": "playwright", "result": "available"})
-        results["playwright_available"] = True
-        print("[AUTH] Playwright available — can automate login if needed")
-        print("[AUTH] To use: Claude will generate and run a Playwright login script")
-    else:
-        results["layers_tried"].append({"layer": 2, "method": "playwright", "result": "not installed"})
-        results["playwright_available"] = False
-
-    # Layer 5: Manual fallback instructions
+    # Layer 2: Open user's real browser + one-step cookie paste
+    # NOTE: Playwright is NOT used for login — Cloudflare/Arkose blocks automated browsers.
+    # Instead, open the user's real browser and ask for ONE copy-paste from Network tab.
     if not results["success"]:
         print("")
-        print("[AUTH] No automatic authentication found.")
-        print("[AUTH] FALLBACK OPTIONS (Claude should try these in order):")
+        print("[AUTH] No automatic cookies found (Chrome 130+ encrypts cookies on Windows).")
+        print("[AUTH] FALLBACK: Open user's browser for one-time login + cookie extraction.")
         print("")
-        print("  Option A — Playwright interactive (if available):")
-        print("    Generate a Playwright script that opens a browser for the user to log in once.")
-        print("    After login, auth state is saved and reused for all subsequent requests.")
+        print(f"[AUTH] ACTION REQUIRED:")
+        print(f"  1. Opening {target_domain} in your default browser...")
+        open_browser(f"https://{target_domain}")
+        print(f"  2. Log in to {target_domain} (if not already logged in)")
+        print(f"  3. Press F12 → Network tab → refresh page (F5)")
+        print(f"  4. Click the first request → find 'Cookie:' in Request Headers")
+        print(f"  5. Right-click the Cookie value → Copy value → Paste it here")
+        print(f"  6. Then run: python auth_manager.py --parse-header '<pasted-cookie-string>' {output_dir}")
         print("")
-        print("  Option B — Browser cookie extraction after manual login:")
-        print("    1. Ask user to log in to the target in their browser")
-        print(f"    2. Run: python auth_manager.py --extract {target_domain} {output_dir}")
-        print("    3. Cookies will be extracted automatically")
-        print("")
-        print("  Option C — Direct cookie paste:")
-        print("    Ask user to open DevTools → Application → Cookies and paste the values")
-        print("")
+        print("[AUTH] IMPORTANT: Copy the Cookie header from the NETWORK tab, NOT from console.")
+        print("[AUTH] The Network tab includes HttpOnly cookies (SSO tokens) that document.cookie misses.")
         results["fallback_instructions"] = True
+        results["browser_opened"] = True
 
     save_auth_results(results, output_dir)
     return results
@@ -430,12 +475,52 @@ def main():
         print("Usage:")
         print("  auth_manager.py <target-domain> <hunt-dir>          # Auto-authenticate (try all layers)")
         print("  auth_manager.py --extract <domain> <output-dir>     # Extract browser cookies only")
+        print("  auth_manager.py --parse-header '<cookie-string>' <output-dir> [domain]  # Parse Cookie header from Network tab")
+        print("  auth_manager.py --open-browser <url>                # Open URL in user's default browser")
         print("  auth_manager.py --to-curl <cookies.json> <out.txt>  # Convert cookies to curl format")
         print("  auth_manager.py --header <cookies.json> [domain]    # Output Cookie header string")
-        print("  auth_manager.py --playwright-script <url> <out.js>  # Generate Playwright login script")
         sys.exit(1)
 
-    if sys.argv[1] == "--extract":
+    if sys.argv[1] == "--parse-header":
+        if len(sys.argv) < 4:
+            print("Usage: auth_manager.py --parse-header '<cookie-string>' <output-dir> [domain]")
+            sys.exit(1)
+        cookie_string = sys.argv[2]
+        output_dir = sys.argv[3]
+        domain = sys.argv[4] if len(sys.argv) > 4 else ""
+        cookies = parse_cookie_header(cookie_string, domain)
+        if cookies:
+            os.makedirs(output_dir, exist_ok=True)
+            cookie_file = os.path.join(output_dir, "cookies.json")
+            save_cookies(cookies, cookie_file)
+            curl_file = os.path.join(output_dir, "cookies.txt")
+            cookies_to_curl_format(cookies, curl_file)
+            header_file = os.path.join(output_dir, "cookie-header-full.txt")
+            with open(header_file, "w") as f:
+                f.write(cookie_string.strip())
+            print(f"SUCCESS: Parsed {len(cookies)} cookies")
+            print(f"JSON: {cookie_file}")
+            print(f"Curl jar: {curl_file}")
+            print(f"Raw header: {header_file}")
+            # Show session-related cookies
+            session_names = {"sso", "sso-rw", "sid", "session", "sessionid", "auth", "token",
+                             "access_token", "jwt", "cf_clearance"}
+            session_cookies = [c for c in cookies if c["name"].lower() in session_names or "sso" in c["name"].lower()]
+            if session_cookies:
+                print(f"Session cookies found: {', '.join(c['name'] for c in session_cookies)}")
+        else:
+            print("FAILED: Could not parse cookie string")
+            sys.exit(1)
+
+    elif sys.argv[1] == "--open-browser":
+        url = sys.argv[2] if len(sys.argv) > 2 else ""
+        if not url:
+            print("Usage: auth_manager.py --open-browser <url>")
+            sys.exit(1)
+        open_browser(url)
+        print(f"Opened {url} in default browser")
+
+    elif sys.argv[1] == "--extract":
         domain = sys.argv[2] if len(sys.argv) > 2 else ""
         output_dir = sys.argv[3] if len(sys.argv) > 3 else "."
         cookies, msg = extract_browser_cookies(domain)
@@ -465,17 +550,6 @@ def main():
         with open(cookies_file) as f:
             cookies = json.load(f)
         print(cookies_to_header(cookies, domain))
-
-    elif sys.argv[1] == "--playwright-script":
-        url = sys.argv[2]
-        output = sys.argv[3] if len(sys.argv) > 3 else "login.js"
-        state_file = output.replace(".js", "-state.json")
-        script = generate_playwright_login_script(url, state_file)
-        with open(output, "w") as f:
-            f.write(script)
-        print(f"Script: {output}")
-        print(f"Run: npx playwright test {output}")
-        print(f"Or:  node {output}")
 
     else:
         domain = sys.argv[1]
