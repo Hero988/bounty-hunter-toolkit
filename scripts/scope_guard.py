@@ -145,7 +145,7 @@ def check_scope(target, scope_data):
 
     # Step 1: Check out-of-scope FIRST (deny takes priority)
     for entry in out_of_scope:
-        identifier = entry.get("identifier", "")
+        identifier = entry.get("identifier", entry.get("asset", ""))
         if not identifier:
             continue
 
@@ -166,7 +166,7 @@ def check_scope(target, scope_data):
 
     # Step 2: Check in-scope
     for entry in in_scope:
-        identifier = entry.get("identifier", "")
+        identifier = entry.get("identifier", entry.get("asset", ""))
         scope_path = entry.get("path", "/")
         if not identifier:
             continue
@@ -200,10 +200,21 @@ def is_specific_urls_only(scope_data):
     Returns: (is_specific: bool, in_scope_urls: list)
     """
     in_scope = scope_data.get("in_scope", [])
-    has_wildcard = any("*" in entry.get("identifier", "") for entry in in_scope)
-    has_cidr = any("/" in entry.get("identifier", "") and not entry.get("identifier", "").startswith("http") for entry in in_scope)
+    # Check both 'identifier' and 'asset' fields (scope.json may use either)
+    has_wildcard = any(
+        "*" in entry.get("identifier", "") or
+        "*" in entry.get("asset", "") or
+        entry.get("type", "").upper() == "WILDCARD" or
+        entry.get("asset_type", "").upper() == "WILDCARD"
+        for entry in in_scope
+    )
+    has_cidr = any(
+        "/" in entry.get("identifier", entry.get("asset", "")) and
+        not entry.get("identifier", entry.get("asset", "")).startswith("http")
+        for entry in in_scope
+    )
     if not has_wildcard and not has_cidr and in_scope:
-        urls = [entry.get("identifier", "") for entry in in_scope if entry.get("identifier")]
+        urls = [entry.get("identifier", entry.get("asset", "")) for entry in in_scope if entry.get("identifier") or entry.get("asset")]
         return True, urls
     return False, []
 

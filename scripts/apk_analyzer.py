@@ -88,7 +88,19 @@ def try_curl_download(url, dest):
     if not which("curl"):
         return False
     rc, _, _ = run_cmd(["curl", "-fsSL", "-o", dest, "-L", url], timeout=120)
-    return rc == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 1000
+    if rc != 0 or not os.path.isfile(dest) or os.path.getsize(dest) < 1000:
+        return False
+    # Verify it's actually an APK/ZIP, not an HTML error page
+    try:
+        with open(dest, "rb") as f:
+            magic = f.read(4)
+        if magic[:2] != b'PK':  # ZIP/APK magic bytes
+            print(f"[!] Downloaded file is not a valid APK (magic: {magic[:4]}). Removing.")
+            os.remove(dest)
+            return False
+    except Exception:
+        return False
+    return True
 
 
 def download_apk(package_name, output_dir):
@@ -132,20 +144,40 @@ def decompile_apk(apk_path, output_dir):
     decompiled = os.path.join(output_dir, "decompiled")
     ensure_dir(decompiled)
 
+    # Try to find jadx in common locations
+    jadx_cmd = None
     if which("jadx"):
-        print("[*] Decompiling with jadx ...")
+        jadx_cmd = "jadx"
+    else:
+        # Check common install paths
+        common_paths = [
+            os.path.join(os.path.expanduser("~"), "scoop", "shims", "jadx"),
+            os.path.join(os.path.expanduser("~"), "scoop", "shims", "jadx.exe"),
+            os.path.join(os.path.expanduser("~"), "go", "bin", "jadx"),
+            os.path.join(os.path.expanduser("~"), ".local", "bin", "jadx"),
+            "/usr/local/bin/jadx",
+            "/opt/homebrew/bin/jadx",
+        ]
+        for p in common_paths:
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                jadx_cmd = p
+                break
+
+    if jadx_cmd:
+        print(f"[*] Decompiling with jadx ({jadx_cmd}) ...")
         rc, stdout, stderr = run_cmd(
-            ["jadx", "-d", decompiled, "--no-res", "--no-debug-info", apk_path],
+            [jadx_cmd, "-d", decompiled, "--no-res", "--no-debug-info", apk_path],
             timeout=600,
         )
-        if rc == 0:
+        if rc == 0 or (rc != 0 and os.path.isdir(os.path.join(decompiled, "sources"))):
             print(f"[+] jadx decompilation complete -> {decompiled}")
             return decompiled
         else:
             print(f"[!] jadx returned {rc}, falling back to unzip.")
             print(f"    stderr: {stderr[:300]}")
     else:
-        print("[!] jadx not found on PATH. Using unzip fallback (limited analysis).")
+        print("[!] jadx not found on PATH or common locations. Using unzip fallback (limited analysis).")
+        print("    Install jadx: scoop install jadx (Windows) | brew install jadx (Mac) | apt install jadx (Linux)")
 
     # Fallback: basic zip extraction
     try:

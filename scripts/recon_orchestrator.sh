@@ -100,16 +100,19 @@ log "=== Phase 3: Historical URL Collection ==="
 URLS_RAW="${OUTPUT_DIR}/recon/raw/urls-raw.txt"
 URLS_FINAL="${OUTPUT_DIR}/recon/urls.txt"
 
-# GAU (GetAllUrls)
+# GAU (GetAllUrls) - run on both in-scope subs AND the primary domain
 if command -v gau &>/dev/null; then
     log "Running gau..."
     cat "${SUBS_INSCOPE}" | gau --threads "${THREADS}" 2>/dev/null >> "${URLS_RAW}" || true
+    # Also run directly on primary domain (fallback if in-scope list is empty)
+    echo "${DOMAIN}" | gau --threads "${THREADS}" 2>/dev/null >> "${URLS_RAW}" || true
 fi
 
-# Waybackurls
+# Waybackurls - run on both in-scope subs AND the primary domain
 if command -v waybackurls &>/dev/null; then
     log "Running waybackurls..."
     cat "${SUBS_INSCOPE}" | waybackurls 2>/dev/null >> "${URLS_RAW}" || true
+    echo "${DOMAIN}" | waybackurls 2>/dev/null >> "${URLS_RAW}" || true
 fi
 
 # Deduplicate URLs
@@ -128,9 +131,27 @@ log "=== Phase 4: HTTP Probing ==="
 LIVE_HOSTS="${OUTPUT_DIR}/recon/live-hosts.txt"
 LIVE_JSON="${OUTPUT_DIR}/recon/live-hosts.json"
 
+# Find ProjectDiscovery's httpx (Go binary), not Python's httpx
+HTTPX_BIN=""
 if command -v httpx &>/dev/null; then
-    log "Running httpx..."
-    cat "${SUBS_INSCOPE}" | httpx -silent \
+    # Verify it's the Go binary by checking for -silent flag support
+    if httpx -silent -version &>/dev/null 2>&1; then
+        HTTPX_BIN="httpx"
+    fi
+fi
+# Fallback: check common Go binary locations
+if [ -z "${HTTPX_BIN}" ]; then
+    for candidate in "$HOME/go/bin/httpx" "/usr/local/bin/httpx" "$HOME/.local/bin/httpx"; do
+        if [ -x "${candidate}" ] && "${candidate}" -silent -version &>/dev/null 2>&1; then
+            HTTPX_BIN="${candidate}"
+            break
+        fi
+    done
+fi
+
+if [ -n "${HTTPX_BIN}" ]; then
+    log "Running httpx (${HTTPX_BIN})..."
+    cat "${SUBS_INSCOPE}" | "${HTTPX_BIN}" -silent \
         -status-code -title -tech-detect -follow-redirects \
         -threads "${THREADS}" \
         -rate-limit "${RATE_LIMIT}" \

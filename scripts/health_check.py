@@ -46,7 +46,7 @@ def check_tools(quick=False):
     core_tools = [
         ("nuclei", "nuclei -version"),
         ("subfinder", "subfinder -version"),
-        ("httpx", "httpx -version"),
+        ("httpx", "httpx -version 2>&1 | head -1"),
         ("ffuf", "ffuf -V"),
         ("katana", "katana -version"),
         ("nmap", "nmap --version"),
@@ -68,6 +68,14 @@ def check_tools(quick=False):
         status = "PASS" if installed else "FAIL"
         print(f"  [{status}] {name}: {version}")
         results.append((name, installed, "core"))
+        # Warn if httpx appears to be Python httpx instead of ProjectDiscovery's
+        if name == "httpx" and installed and version and "projectdiscovery" not in version.lower() and "Current Version" not in version:
+            # Try the Go binary directly
+            go_httpx = os.path.join(os.path.expanduser("~"), "go", "bin", "httpx")
+            if os.path.isfile(go_httpx):
+                print(f"  [WARN] System httpx may be Python httpx. Go binary found at: {go_httpx}")
+            else:
+                print(f"  [WARN] httpx may be Python httpx (not ProjectDiscovery). Install: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest")
 
     if not quick:
         print("\nExtended Tools:")

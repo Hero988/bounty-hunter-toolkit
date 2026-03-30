@@ -363,7 +363,7 @@ def cookies_to_curl_format(cookies, output_file):
         value = c.get("value", "")
         lines.append(f"{domain}\t{flag}\t{path}\t{secure}\t{expiry}\t{name}\t{value}")
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
-    with open(output_file, "w") as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return output_file
 
@@ -380,7 +380,7 @@ def cookies_to_header(cookies, domain=None):
 def save_cookies(cookies, output_file):
     """Save cookies to JSON file."""
     os.makedirs(os.path.dirname(output_file) or ".", exist_ok=True)
-    with open(output_file, "w") as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         json.dump(cookies, f, indent=2)
     return output_file
 
@@ -426,7 +426,7 @@ def auto_authenticate(target_domain, hunt_dir, output_dir=None):
     results["layers_tried"].append({"layer": 3, "method": "apk_tokens", "result": f"{len(tokens)} tokens" if tokens else "none"})
     if tokens:
         token_file = os.path.join(output_dir, "apk-tokens.json")
-        with open(token_file, "w") as f:
+        with open(token_file, "w", encoding="utf-8") as f:
             json.dump(tokens, f, indent=2)
         results["apk_tokens"] = tokens
         results["apk_token_file"] = token_file
@@ -445,9 +445,9 @@ def auto_authenticate(target_domain, hunt_dir, output_dir=None):
         print(f"  1. Opening {target_domain} in your default browser...")
         open_browser(f"https://{target_domain}")
         print(f"  2. Log in to {target_domain} (if not already logged in)")
-        print(f"  3. Press F12 → Network tab → refresh page (F5)")
-        print(f"  4. Click the first request → find 'Cookie:' in Request Headers")
-        print(f"  5. Right-click the Cookie value → Copy value → Paste it here")
+        print(f"  3. Press F12 -> Network tab -> refresh page (F5)")
+        print(f"  4. Click the first request -> find 'Cookie:' in Request Headers")
+        print(f"  5. Right-click the Cookie value -> Copy value -> Paste it here")
         print(f"  6. Then run: python auth_manager.py --parse-header '<pasted-cookie-string>' {output_dir}")
         print("")
         print("[AUTH] IMPORTANT: Copy the Cookie header from the NETWORK tab, NOT from console.")
@@ -466,7 +466,7 @@ def save_auth_results(results, output_dir):
     safe = {k: v for k, v in results.items() if k != "cookies" or v is None}
     if results.get("cookies"):
         safe["cookie_count"] = len(results["cookies"])
-    with open(results_file, "w") as f:
+    with open(results_file, "w", encoding="utf-8") as f:
         json.dump(safe, f, indent=2)
 
 
@@ -496,7 +496,7 @@ def main():
             curl_file = os.path.join(output_dir, "cookies.txt")
             cookies_to_curl_format(cookies, curl_file)
             header_file = os.path.join(output_dir, "cookie-header-full.txt")
-            with open(header_file, "w") as f:
+            with open(header_file, "w", encoding="utf-8") as f:
                 f.write(cookie_string.strip())
             print(f"SUCCESS: Parsed {len(cookies)} cookies")
             print(f"JSON: {cookie_file}")
