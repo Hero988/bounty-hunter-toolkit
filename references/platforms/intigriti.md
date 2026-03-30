@@ -151,3 +151,96 @@ Similar to HackerOne. Programs list:
 - **Bug Bytes newsletter**: Intigriti publishes a weekly security newsletter. Useful for staying current on techniques, and they feature top hunters.
 - **Coordinate disclosure**: Intigriti has a strong disclosure culture. Requesting disclosure after fix is well-received and builds your public profile.
 - **Payment**: Payouts are via bank transfer (SEPA for EU) or PayPal. Processing can take 2-4 weeks after bounty award.
+
+---
+
+## Intigriti Researcher API Reference
+
+**Base URL:** `https://api.intigriti.com/external/researcher`
+**Auth:** `Authorization: Bearer <PERSONAL_ACCESS_TOKEN>`
+**Token setup:** https://app.intigriti.com/researcher/personal-access-tokens
+**Swagger UI:** https://api.intigriti.com/external/researcher/swagger/index.html
+**Status:** BETA (read-only, no submission support)
+
+### Endpoints (6 total)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/v1/programs` | List all accessible programs |
+| GET | `/v1/programs/{programId}` | Full program details (scope + rules inline) |
+| GET | `/v1/programs/activities` | Program change feed (scope/rule updates) |
+| GET | `/v1/programs/{programId}/domains/{versionId}` | Specific domain version |
+| GET | `/v1/programs/{programId}/rules-of-engagements/{versionId}` | Specific rules version |
+| GET | `/v1/payouts` | Your payout history |
+
+### Pagination
+`?limit=500&offset=0` (max 500 per page). Response: `{"maxCount": N, "records": [...]}`
+
+### Key Enum Values
+
+**Domain Types:**
+| ID | Value | Description |
+|----|-------|-------------|
+| 1 | Url | Web application URL |
+| 2 | Android | Google Play package name |
+| 3 | iOS | Apple App Store ID |
+| 4 | IpRange | IP address range |
+| 6 | Other | Other asset type |
+| 7 | Wildcard | Wildcard domain (*.example.com) |
+
+**Tiers (bounty eligibility):**
+| ID | Value | Action |
+|----|-------|--------|
+| 4 | Tier 1 | Highest priority, highest bounty |
+| 3 | Tier 2 | Medium priority |
+| 2 | Tier 3 | Lower priority |
+| 1 | No Bounty | In scope but no monetary reward |
+| 5 | Out Of Scope | Do NOT test |
+
+**Program Status:** Open (3), Suspended (4), Closing (5)
+**Program Type:** Bug Bounty (1), Hybrid (2)
+**Confidentiality:** Invite Only (1), Application (2), Registered (3), Public (4)
+
+### Workflow: Extract Scope for a Program
+
+```bash
+TOKEN="YOUR_TOKEN"
+BASE="https://api.intigriti.com/external/researcher"
+
+# 1. Find program by handle
+HANDLE="program-handle-from-url"
+PROGRAM_ID=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE/v1/programs?statusId=3&limit=500" | \
+  python -c "import json,sys; ps=json.load(sys.stdin)['records']; m=[p for p in ps if p['handle']=='$HANDLE']; print(m[0]['id'] if m else '')")
+
+# 2. Get full details (includes scope + rules)
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/programs/$PROGRAM_ID" | python -m json.tool
+
+# 3. Extract in-scope domains
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE/v1/programs/$PROGRAM_ID" | \
+  python -c "
+import json,sys
+d = json.load(sys.stdin)
+domains = d.get('domains',{}).get('content',[]) or []
+for dom in domains:
+    tier = dom['tier']['value']
+    dtype = dom['type']['value']
+    endpoint = dom['endpoint']
+    if dom['tier']['id'] != 5:  # Skip Out Of Scope
+        print(f'[{tier}] ({dtype}) {endpoint}')
+"
+```
+
+### Testing Requirements
+The `rulesOfEngagement.content.testingRequirements` object contains:
+- `automatedTooling` — Policy on automated scanning tools
+- `userAgent` — Required User-Agent string (set this in all requests if specified)
+- `requestHeader` — Required custom header (e.g., for WAF whitelisting)
+- `intigritiMe` — Whether Intigriti VPN/proxy must be used
+
+### Important Notes
+- **No submission API** — Reports must be submitted via the web UI
+- **403 on program details** — May mean you need to accept updated T&Cs on the web first
+- **Program IDs are GUIDs** — Cannot use handles directly; must list programs first to find the GUID
+- **Bounty tables** — Per-severity bounty amounts are NOT available via API; check the web UI
+- **Rate limits** — Not documented; use 1-2 second delays between requests

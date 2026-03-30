@@ -1,0 +1,641 @@
+================================================================================
+INTIGRITI RESEARCHER API v1.0 - COMPLETE REFERENCE
+================================================================================
+Status: BETA (no timeline for full release)
+OpenAPI Version: 3.0.0
+Generator: NSwag v14.6.3.0
+
+================================================================================
+1. BASE URL
+================================================================================
+
+https://api.intigriti.com/external/researcher
+
+All endpoint paths below are relative to this base URL.
+Swagger UI: https://api.intigriti.com/external/researcher/swagger/index.html
+Swagger JSON: https://api.intigriti.com/external/researcher/swagger/v1.0/swagger.json
+
+================================================================================
+2. AUTHENTICATION
+================================================================================
+
+Type: HTTP Bearer Token
+Scheme: bearer
+Header: Authorization: Bearer <YOUR_PERSONAL_ACCESS_TOKEN>
+
+How to get your token:
+  1. Log in to https://app.intigriti.com
+  2. Navigate to: https://app.intigriti.com/researcher/personal-access-tokens
+  3. Create a new Personal Access Token
+  4. Copy the token and store it securely
+  5. Use it in the Authorization header for all API requests
+
+Example:
+  curl -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+    https://api.intigriti.com/external/researcher/v1/programs
+
+All endpoints require bearer authentication. No endpoint is public.
+
+================================================================================
+3. PAGINATION FORMAT
+================================================================================
+
+All list endpoints use offset-based pagination with these query parameters:
+
+  limit   - integer (int32), min: 0, max: 500, default: 50
+  offset  - integer (int32), min: 0, max: 2147483647
+
+Response wrapper:
+  {
+    "maxCount": <total_number_of_records>,
+    "records": [ ... array of items ... ]
+  }
+
+To paginate through all results:
+  - First request:  ?limit=500&offset=0
+  - Second request: ?limit=500&offset=500
+  - Continue until offset >= maxCount
+
+================================================================================
+4. RATE LIMITS
+================================================================================
+
+Not explicitly documented in the Swagger spec or public documentation.
+The API follows REST best practices. Monitor for HTTP 429 responses.
+Recommendation: Use reasonable delays between requests (1-2 seconds).
+
+================================================================================
+5. ALL ENDPOINTS (6 TOTAL)
+================================================================================
+
+------------------------------------------------------------------------------
+ENDPOINT 1: GET /v1/programs
+------------------------------------------------------------------------------
+Summary: Get all programs you have access to
+Operation ID: Program_GetProgramOverview
+Tags: Program
+
+Query Parameters:
+  - statusId  (integer, int32, optional) - Filter by program status
+  - typeId    (integer, int32, optional) - Filter by program type
+  - following (boolean, optional)        - Filter to followed programs only
+  - limit     (integer, int32, optional) - Results per page (0-500, default 50)
+  - offset    (integer, int32, optional) - Pagination offset (0-2147483647)
+
+Response 200: PaginationViewModelOfProgramOverviewViewModel
+  {
+    "maxCount": integer,
+    "records": [
+      {
+        "id": "guid",
+        "handle": "string",
+        "name": "string",
+        "following": boolean,
+        "minBounty": {
+          "value": decimal,
+          "currency": "string"    // e.g. "EUR", "USD"
+        },
+        "maxBounty": {
+          "value": decimal,
+          "currency": "string"
+        },
+        "confidentialityLevel": {
+          "id": integer,
+          "value": "string"
+        },
+        "status": {
+          "id": integer,
+          "value": "string"
+        },
+        "type": {
+          "id": integer,
+          "value": "string"
+        },
+        "webLinks": {
+          "detail": "string"     // URL to program detail page
+        },
+        "industry": "string" | null
+      }
+    ]
+  }
+
+Example:
+  GET https://api.intigriti.com/external/researcher/v1/programs?statusId=3&limit=100&offset=0
+
+------------------------------------------------------------------------------
+ENDPOINT 2: GET /v1/programs/{programId}
+------------------------------------------------------------------------------
+Summary: Get program details
+Operation ID: Program_GetProgramDetail
+Tags: Program
+
+Path Parameters:
+  - programId (string, GUID, required) - The program's unique identifier
+
+Response 200: ProgramDetailViewModel
+  {
+    "id": "guid",
+    "handle": "string",
+    "name": "string",
+    "following": boolean,
+    "confidentialityLevel": {
+      "id": integer,
+      "value": "string"
+    },
+    "status": {
+      "id": integer,
+      "value": "string"
+    },
+    "type": {
+      "id": integer,
+      "value": "string"
+    },
+    "domains": {
+      "id": "guid",               // versionId for domains
+      "createdAt": int64,          // Unix epoch timestamp
+      "content": [                 // Array of DomainViewModel (nullable)
+        {
+          "id": "guid",
+          "type": {
+            "id": integer,
+            "value": "string"
+          },
+          "endpoint": "string",    // The actual domain/URL/app identifier
+          "tier": {
+            "id": integer,
+            "value": "string"
+          },
+          "description": "string",
+          "requiredSkills": [
+            {
+              "id": "string",
+              "name": "string"
+            }
+          ]
+        }
+      ]
+    },
+    "rulesOfEngagement": {         // nullable
+      "id": "guid",                // versionId for rules
+      "createdAt": int64,
+      "content": {                 // nullable
+        "description": "string",   // Rules description (HTML/markdown)
+        "testingRequirements": {
+          "intigritiMe": boolean,
+          "automatedTooling": integer | null,
+          "userAgent": "string" | null,
+          "requestHeader": "string" | null
+        },
+        "safeHarbour": boolean
+      },
+      "attachments": [
+        {
+          "url": "string",
+          "code": integer
+        }
+      ]
+    },
+    "webLinks": {
+      "detail": "string"
+    },
+    "industry": "string" | null
+  }
+
+Response 403: Forbidden
+  - Program requires acceptance of updated terms and conditions via the web UI
+
+NOTE: This endpoint returns the FULL scope (domains) and rules of engagement
+inline. The domains.id field is the versionId needed for the dedicated
+domains endpoint.
+
+Example:
+  GET https://api.intigriti.com/external/researcher/v1/programs/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+------------------------------------------------------------------------------
+ENDPOINT 3: GET /v1/programs/activities
+------------------------------------------------------------------------------
+Summary: Get all program activities
+Operation ID: Program_GetProgramActivities
+Tags: Program
+
+Query Parameters:
+  - createdSince (integer, int64, optional) - Unix epoch timestamp filter
+  - following    (boolean, optional)        - Filter to followed programs
+  - limit        (integer, int32, optional) - Results per page (0-500, default 50)
+  - offset       (integer, int32, optional) - Pagination offset
+
+Response 200: PaginationViewModelOfProgramActivityViewModel
+  Description: Returns the 50 most recent activities (by default)
+  {
+    "maxCount": integer,
+    "records": [
+      {
+        "programId": "guid",
+        "activity": {
+          // Abstract base object - contains:
+          // "fromVersionId" and "toVersionId" for version changes
+        },
+        "type": {
+          "id": integer,
+          "value": "string"
+        },
+        "createdAt": int64,        // Unix epoch timestamp
+        "following": boolean
+      }
+    ]
+  }
+
+Use Case: Monitor programs for scope changes (domain additions/removals)
+and rules of engagement updates. The activity.fromVersionId and
+activity.toVersionId can be used with the domains and rules-of-engagements
+endpoints to see what changed.
+
+Example:
+  GET https://api.intigriti.com/external/researcher/v1/programs/activities?following=true&limit=100
+
+------------------------------------------------------------------------------
+ENDPOINT 4: GET /v1/programs/{programId}/domains/{versionId}
+------------------------------------------------------------------------------
+Summary: Get program domains
+Operation ID: Program_GetProgramAsset
+Tags: Program
+
+Path Parameters:
+  - programId (string, GUID, required) - The program's unique identifier
+  - versionId (string, GUID, required) - The domain version identifier
+    (obtained from program details or activities)
+
+Response 200: ProgramDomainsViewModel
+  {
+    "domains": {
+      "id": "guid",
+      "createdAt": int64,
+      "content": [
+        {
+          "id": "guid",
+          "type": {
+            "id": integer,
+            "value": "string"
+          },
+          "endpoint": "string",
+          "tier": {
+            "id": integer,
+            "value": "string"
+          },
+          "description": "string",
+          "requiredSkills": [
+            {
+              "id": "string",
+              "name": "string"
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+Example:
+  GET https://api.intigriti.com/external/researcher/v1/programs/PROGRAM-GUID/domains/VERSION-GUID
+
+------------------------------------------------------------------------------
+ENDPOINT 5: GET /v1/programs/{programId}/rules-of-engagements/{versionId}
+------------------------------------------------------------------------------
+Summary: Get program rules of engagement
+Operation ID: Program_GetProgramRulesOfEngagement
+Tags: Program
+
+Path Parameters:
+  - programId (string, GUID, required)
+  - versionId (string, GUID, required) - Rules version identifier
+
+Response 200: ProgramRulesOfEngagementViewModel
+  {
+    "rulesOfEngagement": {
+      "id": "guid",
+      "createdAt": int64,
+      "content": {
+        "description": "string",
+        "testingRequirements": {
+          "intigritiMe": boolean,
+          "automatedTooling": integer | null,
+          "userAgent": "string" | null,
+          "requestHeader": "string" | null
+        },
+        "safeHarbour": boolean
+      },
+      "attachments": [
+        {
+          "url": "string",
+          "code": integer
+        }
+      ]
+    }
+  }
+
+Response 400: Bad Request
+
+Example:
+  GET https://api.intigriti.com/external/researcher/v1/programs/PROGRAM-GUID/rules-of-engagements/VERSION-GUID
+
+------------------------------------------------------------------------------
+ENDPOINT 6: GET /v1/payouts
+------------------------------------------------------------------------------
+Summary: BETA: Get all payouts you have access to
+Operation ID: Payout_GetPayoutOverview
+Tags: Payout
+
+Query Parameters:
+  - statusId     (integer, int32, optional) - Filter by payout status
+  - createdSince (integer, int64, optional) - Unix epoch timestamp
+  - paidSince    (integer, int64, optional) - Unix epoch timestamp
+  - limit        (integer, int32, optional) - Results per page (0-500)
+  - offset       (integer, int32, optional) - Pagination offset
+
+Response 200: PaginationViewModelOfPayoutOverviewViewModel
+  {
+    "maxCount": integer,
+    "records": [
+      {
+        "id": "string",
+        "amount": {
+          "value": decimal,
+          "currency": "string"
+        },
+        "status": {
+          "id": integer,
+          "value": "string"
+        },
+        "createdAt": int64,
+        "paidAt": int64 | null
+      }
+    ]
+  }
+
+Example:
+  GET https://api.intigriti.com/external/researcher/v1/payouts?limit=100&offset=0
+
+================================================================================
+6. ENUM VALUES (Known Values from API Responses)
+================================================================================
+
+PROGRAM STATUS (statusId):
+  3 = Open
+  4 = Suspended
+  5 = Closing
+
+PROGRAM TYPE (typeId):
+  1 = Bug Bounty
+  2 = Hybrid
+
+CONFIDENTIALITY LEVEL:
+  1 = Invite Only
+  2 = Application
+  3 = Registered
+  4 = Public
+
+DOMAIN/ASSET TYPE (type.id):
+  1 = Url
+  2 = Android
+  3 = iOS
+  4 = IpRange
+  6 = Other
+  7 = Wildcard
+
+DOMAIN TIER (tier.id):
+  1 = No Bounty
+  2 = Tier 3
+  3 = Tier 2
+  4 = Tier 1
+  5 = Out Of Scope
+
+BOUNTY SEVERITY LEVELS (used in bounty tables on the platform):
+  - None
+  - Low
+  - Medium
+  - High
+  - Critical
+  (These map to CVSS score ranges)
+
+================================================================================
+7. COMPLETE SCHEMA DEFINITIONS
+================================================================================
+
+PaginationViewModelOfPayoutOverviewViewModel:
+  - maxCount: integer (int32)
+  - records: array of PayoutOverviewViewModel
+
+PayoutOverviewViewModel (abstract):
+  - id: string
+  - amount: MoneyViewModel
+  - status: EnumerationViewModel
+  - createdAt: integer (int64) - Unix epoch
+  - paidAt: integer (int64, nullable) - Unix epoch
+
+MoneyViewModel:
+  - value: number (decimal)
+  - currency: string
+
+EnumerationViewModel:
+  - id: integer (int32)
+  - value: string
+
+PaginationViewModelOfProgramOverviewViewModel:
+  - maxCount: integer (int32)
+  - records: array of ProgramOverviewViewModel
+
+ProgramOverviewViewModel:
+  - id: string (GUID)
+  - handle: string
+  - name: string
+  - following: boolean
+  - minBounty: MoneyViewModel
+  - maxBounty: MoneyViewModel
+  - confidentialityLevel: EnumerationViewModel
+  - status: EnumerationViewModel
+  - type: EnumerationViewModel
+  - webLinks: ProgramWebLinks
+  - industry: string (nullable)
+
+ProgramWebLinks:
+  - detail: string (URL)
+
+ProgramDetailViewModel:
+  - id: string (GUID)
+  - handle: string
+  - name: string
+  - following: boolean
+  - confidentialityLevel: EnumerationViewModel
+  - status: EnumerationViewModel
+  - type: EnumerationViewModel
+  - domains: VersionViewModelOfListOfDomainViewModel
+  - rulesOfEngagement: VersionWithAttachmentsViewModelOfRulesOfEngagementViewModel (nullable)
+  - webLinks: ProgramWebLinks
+  - industry: string (nullable)
+
+VersionViewModelOfListOfDomainViewModel:
+  - id: string (GUID) - this is the versionId
+  - createdAt: integer (int64)
+  - content: array of DomainViewModel (nullable)
+
+DomainViewModel:
+  - id: string (GUID)
+  - type: EnumerationViewModel (Url/Android/iOS/IpRange/Other/Wildcard)
+  - endpoint: string (the actual target - domain, IP range, app ID, etc.)
+  - tier: EnumerationViewModel (No Bounty/Tier 3/Tier 2/Tier 1/Out Of Scope)
+  - description: string
+  - requiredSkills: array of SkillViewModel
+
+SkillViewModel:
+  - id: string
+  - name: string
+
+VersionWithAttachmentsViewModelOfRulesOfEngagementViewModel (extends VersionViewModelOfRulesOfEngagementViewModel):
+  - id: string (GUID)
+  - createdAt: integer (int64)
+  - content: RulesOfEngagementViewModel (nullable)
+  - attachments: array of AttachmentViewModel
+
+AttachmentViewModel:
+  - url: string
+  - code: integer (int32)
+
+RulesOfEngagementViewModel:
+  - description: string (HTML/text rules description)
+  - testingRequirements: TestingRequirementsViewModel
+  - safeHarbour: boolean
+
+TestingRequirementsViewModel:
+  - intigritiMe: boolean (whether Intigriti VPN/proxy must be used)
+  - automatedTooling: integer (int32, nullable) - policy on automated tools
+  - userAgent: string (nullable) - required User-Agent header for testing
+  - requestHeader: string (nullable) - required custom header for testing
+
+PaginationViewModelOfProgramActivityViewModel:
+  - maxCount: integer (int32)
+  - records: array of ProgramActivityViewModel
+
+ProgramActivityViewModel:
+  - programId: string (GUID)
+  - activity: ActivityViewModel (abstract - contains fromVersionId/toVersionId)
+  - type: EnumerationViewModel
+  - createdAt: integer (int64)
+  - following: boolean
+
+ActivityViewModel:
+  - Abstract base object (polymorphic)
+  - Contains version change information (fromVersionId, toVersionId)
+
+ProgramDomainsViewModel:
+  - domains: VersionViewModelOfListOfDomainViewModel
+
+ProgramRulesOfEngagementViewModel:
+  - rulesOfEngagement: VersionWithAttachmentsViewModelOfRulesOfEngagementViewModel
+
+================================================================================
+8. WHAT THE RESEARCHER API DOES NOT SUPPORT
+================================================================================
+
+Based on the complete Swagger spec, the following are NOT available via
+the Researcher API:
+
+  - Submitting vulnerability reports/submissions (must be done via web UI
+    or embedded submission form)
+  - Checking submission status
+  - Viewing your own submissions
+  - Messaging / communication with triagers
+  - Uploading attachments
+  - Viewing bounty tables with per-severity amounts
+  - Searching programs by name/keyword
+  - Viewing leaderboards or statistics
+  - Account/profile management
+
+The Researcher API is READ-ONLY and focused on:
+  - Listing accessible programs (with filtering)
+  - Getting program details (scope/domains and rules)
+  - Tracking program activity/changes
+  - Viewing payout history
+
+For submission management, the Company/Organization API (separate from the
+Researcher API) provides endpoints, but that requires Company Admin access.
+
+================================================================================
+9. USAGE EXAMPLES (curl)
+================================================================================
+
+# List all open bug bounty programs (first 100)
+curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.intigriti.com/external/researcher/v1/programs?statusId=3&typeId=1&limit=100&offset=0"
+
+# Get only programs you follow
+curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.intigriti.com/external/researcher/v1/programs?following=true&limit=500"
+
+# Get full details for a specific program (includes scope + rules)
+curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.intigriti.com/external/researcher/v1/programs/PROGRAM-GUID-HERE"
+
+# Get domains for a specific program version
+curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.intigriti.com/external/researcher/v1/programs/PROGRAM-GUID/domains/VERSION-GUID"
+
+# Get rules of engagement for a specific version
+curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.intigriti.com/external/researcher/v1/programs/PROGRAM-GUID/rules-of-engagements/VERSION-GUID"
+
+# Monitor program changes (activities from the last 24 hours)
+# Use Unix epoch timestamp for createdSince (e.g., 1711756800 for a specific date)
+curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.intigriti.com/external/researcher/v1/programs/activities?createdSince=1711756800&limit=500"
+
+# Get all payouts
+curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+  "https://api.intigriti.com/external/researcher/v1/payouts?limit=500"
+
+================================================================================
+10. WORKFLOW: Getting In-Scope Domains for a Program
+================================================================================
+
+Step 1: List programs to find the program ID
+  GET /v1/programs?statusId=3&limit=500
+  -> Extract "id" (GUID) from the program you want
+
+Step 2: Get program details (includes domains inline)
+  GET /v1/programs/{programId}
+  -> The response includes "domains.content" array with all assets
+  -> Each domain has a "tier" field:
+     - tier.id=5 (Out Of Scope) = SKIP
+     - tier.id=4 (Tier 1) = Highest priority targets
+     - tier.id=3 (Tier 2) = Medium priority
+     - tier.id=2 (Tier 3) = Lower priority
+     - tier.id=1 (No Bounty) = In scope but no bounty
+
+Step 3: Filter domains by type for your needs
+  - type.id=1 (Url) -> Web application targets
+  - type.id=7 (Wildcard) -> Wildcard domains (*.example.com)
+  - type.id=4 (IpRange) -> IP ranges
+  - type.id=2 (Android) -> Android app package names
+  - type.id=3 (iOS) -> iOS app identifiers
+  - type.id=6 (Other) -> Other asset types
+
+Step 4 (optional): Get a specific version of domains
+  GET /v1/programs/{programId}/domains/{versionId}
+  -> Use the "domains.id" from Step 2 as the versionId
+  -> Useful when tracking scope changes via activities
+
+================================================================================
+11. IMPORTANT NOTES
+================================================================================
+
+- All timestamps are Unix epoch (int64, seconds since 1970-01-01)
+- Program IDs and version IDs are GUIDs (UUIDs)
+- The API is in BETA - changes may occur without notice
+- Some programs may return 403 if you haven't accepted updated T&Cs on the web
+- The "handle" field is the URL-friendly slug for the program
+- The "webLinks.detail" provides a direct URL to the program page on Intigriti
+- Wildcard domains: the * character covers zero or more subdomains
+- Assets NOT listed in the scope are considered OUT OF SCOPE
+- The most specific asset definition takes precedence
+
+================================================================================
+END OF COMPLETE API REFERENCE
+================================================================================
