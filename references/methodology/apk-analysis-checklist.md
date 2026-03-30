@@ -300,6 +300,35 @@ Located at `res/xml/network_security_config.xml` (apktool output).
 
 ---
 
+## Bounty Worthiness Filter (CRITICAL — apply before reporting)
+
+**Lesson learned from Meesho engagement (2026-03): 2 of 3 APK reports were closed as N/A. APK analysis finds many "interesting" things that are NOT vulnerabilities.**
+
+Before reporting ANY APK finding, it MUST pass ALL of these checks:
+
+### Auto-Reject Checklist (if ANY is true, do NOT report)
+- [ ] **Requires physical device access, ADB, or root?** — Most programs exclude physical access. Android sandbox protects SharedPreferences from other apps. `run-as` only works on debuggable builds or with ADB.
+- [ ] **Is it a legitimate mobile feature?** — Device-auth, OTP-less re-login for returning devices, biometric fallback, "remember this device" flows are standard patterns. Package names like "backdoor" may be misleading internal naming.
+- [ ] **Does the PoC only show an error response?** — HTTP 462/400/500 from an endpoint proves it EXISTS, not that it's EXPLOITABLE. Error responses mean validation is working correctly.
+- [ ] **Is it a debug/developer menu?** — Extremely common in production APKs. Only report if remotely triggerable or leaks data across app sandbox.
+- [ ] **Is it an app-level API key returning only config data?** — Most apps ship with backend API keys. Feature flags, internal hostnames, and configuration are typically informational.
+- [ ] **Is it in the program's exclusion list?** — Check for: "physical access", "OAuth secrets in APKs without impact", "lack of binary protections", "unencrypted device storage", "missing cert pinning/root detection/obfuscation"
+
+### Must-Demonstrate Checklist (for findings that pass auto-reject)
+- [ ] **Remote exploitability**: Can an attacker exploit this WITHOUT physical device access?
+- [ ] **Actual data access**: Does the token/key return SENSITIVE user data (PII, financial), not just app config?
+- [ ] **Cross-user impact**: Can attacker A access user B's data using this finding?
+- [ ] **Working PoC**: curl commands that show actual unauthorized data in the response, not just status codes
+
+### What DOES get paid (focus your time here)
+- Hardcoded tokens that return other users' PII or financial data (IDOR via APK tokens)
+- Exported activities that bypass auth and expose sensitive functionality to other apps
+- JS bridge methods that allow cross-app data theft when combined with WebView XSS
+- API endpoints discovered in APK that have actual IDOR/auth bypass (test with two accounts)
+- Cleartext traffic on auth endpoints with demonstrated credential interception
+
+---
+
 ## Report Snippets
 
 Copy, adapt, and use these for your submissions.
