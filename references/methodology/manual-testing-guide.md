@@ -372,3 +372,153 @@ For EVERY hardcoded token, API key, or credential found in APK analysis:
    - Static API key exposing PII → High/Critical
    - Debug token with elevated access → Critical
    - Expired or rate-limited key → Low/Informative
+
+---
+
+## Cloudflare/WAF-Protected Target Testing
+
+When targets block curl/automated tools (403 on all requests, or program explicitly bans scanners):
+
+### Detection
+- Curl returns Cloudflare challenge HTML (403/503) with "Attention Required" or "blocked"
+- `__cf_bm` cookie is TLS-fingerprint-bound — cannot be replayed from curl
+- Program policy states "do not use scanners or automated tools"
+
+### Solution: Chrome DevTools Protocol (CDP)
+Use a real browser controlled via CDP. Requests go through the browser's TLS stack, passing Cloudflare.
+
+**Setup (keeps user's Chrome untouched):**
+```bash
+# Launch Edge as a separate debug browser (Windows — Edge is pre-installed)
+"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" \
+  --remote-debugging-port=9222 \
+  --user-data-dir="C:\temp\edge-debug" \
+  "https://TARGET_URL"
+
+# Or on macOS:
+/Applications/Microsoft\ Edge.app/Contents/MacOS/Microsoft\ Edge \
+  --remote-debugging-port=9222 \
+  --user-data-dir="/tmp/edge-debug" \
+  "https://TARGET_URL"
+```
+
+**Connect via Playwright (Node.js):**
+```javascript
+const { chromium } = require('playwright');
+const browser = await chromium.connectOverCDP('http://localhost:9222');
+const page = browser.contexts()[0].pages().find(p => p.url().includes('target'));
+
+// Make authenticated requests through the browser
+const result = await page.evaluate(async (path) => {
+  const r = await fetch(path, { credentials: 'include' });
+  return { status: r.status, body: await r.text() };
+}, '/api/endpoint');
+```
+
+**Key insight:** `--user-data-dir` is CRITICAL — without it, the browser reuses an existing instance and ignores `--remote-debugging-port`.
+
+### Hybrid Approach: Sign in Node.js, Fetch in Browser
+When the target uses cryptographic request signing:
+1. Extract the signing key from browser storage via CDP
+2. Implement signing in Node.js (using `elliptic` for ECDSA, `crypto` for HMAC)
+3. Pass signed headers to `page.evaluate(fetch())` — browser handles TLS, you handle auth
+4. This bypasses both Cloudflare (real browser TLS) and auth (proper signing)
+
+---
+
+## JavaScript Bundle Analysis for API Discovery
+
+The most productive reconnaissance technique for SPAs. Works on Angular, React, Vue, etc.
+
+### Steps
+1. Find the main JS bundle from page source:
+   ```bash
+   curl -s TARGET | grep -oE 'src="[^"]*\.js"'
+   ```
+2. Download and search for API endpoints:
+   ```bash
+   curl -s TARGET/main.HASH.js | grep -oE '/api/v[0-9]+/[a-zA-Z0-9_/]+' | sort -u
+   ```
+3. Search for configuration objects:
+   ```bash
+   curl -s TARGET/main.HASH.js | grep -oE '(apiUrl|publicApiUrl|baseUrl)[^,}]*'
+   ```
+4. Search for auth mechanisms:
+   ```bash
+   curl -s TARGET/main.HASH.js | grep -oE '.{0,100}(X-API-KEY|Authorization|Bearer|apiKey).{0,100}'
+   ```
+
+### What to Look For
+- **Multiple API namespaces**: Apps often have `/api/v3/`, `/api/v4/`, `/public_api/v1/` etc.
+- **Separate API domains**: `apiUrl` vs `publicApiUrl` may point to different servers
+- **Auth interceptors**: Angular `HttpInterceptor`, Axios interceptors, fetch wrappers
+- **Signing logic**: Search for `.sign(`, `.toDER(`, `HMAC`, `SHA256` near API headers
+- **Feature flags**: Config endpoints often leak internal feature states
+- **WebSocket endpoints**: Search for `wss://`, `Pusher`, `socket`
+
+### Common Patterns by Framework
+| Framework | Bundle Name | Config Location |
+|-----------|------------|----------------|
+| Angular | `main.HASH.js` | `environment.ts` compiled into bundle |
+| React | `main.HASH.js` or `app.HASH.js` | `process.env` or config objects |
+| Vue | `app.HASH.js` | `Vue.prototype.$config` or Vuex store |
+| Next.js | `_next/static/chunks/` | `__NEXT_DATA__` in page HTML |
+
+---
+
+## SPA Catch-All Route Detection
+
+Single Page Applications return 200 for ALL paths (client-side routing). This creates false positives during endpoint discovery.
+
+### Detection
+```bash
+# If random paths return 200 with HTML, it's a SPA catch-all
+curl -s -o /dev/null -w "%{http_code}" TARGET/randompath12345
+curl -s -o /dev/null -w "%{http_code}" TARGET/nonexistent
+# If both return 200, all 200s on non-API paths are false positives
+```
+
+### Implication
+- Only `/api/*` and similar backend paths are real endpoints
+- A 200 on `/graphql` or `/admin` doesn't mean those backend routes exist
+- Always check `Content-Type` header — SPA catch-all returns `text/html`, real APIs return `application/json`
+
+---
+
+## Browser Storage Reconnaissance via CDP
+
+Extract auth tokens, keys, and cached user data from the browser:
+
+```javascript
+// localStorage scan
+const lsData = await page.evaluate(() => {
+  const result = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    result[k] = localStorage.getItem(k).substring(0, 200);
+  }
+  return result;
+});
+
+// sessionStorage scan
+const ssData = await page.evaluate(() => {
+  const result = {};
+  for (let i = 0; i < sessionStorage.length; i++) {
+    const k = sessionStorage.key(i);
+    result[k] = sessionStorage.getItem(k).substring(0, 200);
+  }
+  return result;
+});
+
+// Cookie scan (excludes HttpOnly)
+const cookies = await page.evaluate(() => document.cookie);
+```
+
+### What to Look For
+| Key Pattern | What It Is |
+|-------------|-----------|
+| `privateKey`, `signingKey`, `secretKey` | Cryptographic signing keys |
+| `token`, `jwt`, `accessToken` | Auth tokens |
+| `userInfo`, `profile`, `shared` | Cached user data (may persist after logout) |
+| `apiKey`, `appKey` | API authentication keys |
+| `_grecaptcha` | reCAPTCHA tokens |

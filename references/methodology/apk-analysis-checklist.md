@@ -333,3 +333,52 @@ Copy, adapt, and use these for your submissions.
 > **Title:** Sentry DSN Hardcoded in APK Leaks Internal Error Data
 >
 > **Impact:** The Sentry DSN `[DSN URL]` is embedded in the application source. Using this DSN, an attacker can query the Sentry API to retrieve crash reports containing internal stack traces, file paths, server environment variables, and potentially user data included in error context. This provides an attacker with detailed knowledge of the application's internal architecture, dependency versions, and server-side file structure, significantly lowering the barrier for further attacks.
+
+---
+
+## Flutter App Analysis
+
+Flutter apps compile Dart code into native binaries (`libapp.so`), making traditional decompilation harder. The business logic is NOT in the Java/Kotlin DEX files.
+
+### Identification
+- Check for `io.flutter` in decompiled Java imports
+- Look for `assets/flutter_assets/` in the APK
+- Check for `libflutter.so` and `libapp.so` in `lib/` directory
+- `MethodChannel` usage indicates Flutter-to-native communication
+
+### Split APKs (AAB-Based)
+Modern Flutter apps distributed via App Bundle may not include `libapp.so` in the base APK:
+- The base APK contains Java/Kotlin native plugins and assets
+- Native libraries are in separate config split APKs
+- APKPure/APKCombo may only provide the base APK
+- **Workaround**: Use `bundletool` to extract all splits, or analyze the base APK for native plugin code
+
+### What You CAN Find in Java/Kotlin Layer
+Even without Dart source, the native plugin layer reveals:
+- **Third-party SDK configurations**: Braze API keys, Sentry DSNs, Firebase config, Amplitude keys
+- **MethodChannel handlers**: Bridge between Dart and native — shows what native capabilities the app uses
+- **Network security config**: Certificate pinning, trusted CAs
+- **AndroidManifest.xml**: Exported components, deep link schemes, permissions
+- **Encrypted SharedPreferences**: Flutter secure storage uses AES256-SIV + AES256-GCM
+
+### Common Flutter SDKs to Check
+| SDK | What to Search | Security Relevance |
+|-----|---------------|-------------------|
+| Braze/Appboy | `BrazeConfig`, `setApiKey`, `setCustomEndpoint` | Push notification config, SDK auth |
+| Sentry | `setDsn`, `SentryEvent` | Error reporting DSN (client-side by design) |
+| Firebase | `FirebaseRemoteConfig`, `Crashlytics` | Project config, FCM sender ID |
+| Onfido | `OnfidoFactory`, `LivenessFragment` | KYC verification flow |
+| Amplitude | `api2.amplitude.com` | Analytics tracking |
+
+### Deep Link / App Link Analysis
+Check `assetlinks.json` and `apple-app-site-association` for:
+- **Staging/debug apps** listed in production config (e.g., `com.company.staging`, `com.company.debug`)
+- **`get_login_creds` permission** — allows the app to receive autofill credentials for the domain
+- **Certificate fingerprints** — exposure of signing cert hashes
+- Multiple app IDs sharing the same domain's credential access
+
+### Flutter Secure Storage
+The `flutter_secure_storage` library uses standard base64 strings as identifiers (NOT encryption keys):
+- `"This is the key for a secure storage AES Key"` — standard library constant, NOT a vulnerability
+- Actual encryption uses Android Keystore — keys are hardware-backed
+- The plaintext base64 strings are expected and not a finding

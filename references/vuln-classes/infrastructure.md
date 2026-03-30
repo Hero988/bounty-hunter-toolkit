@@ -414,6 +414,24 @@ airflow:airflow
 
 ---
 
+## Dual-CDN / Multi-Layer Infrastructure Detection
+
+Some targets use multiple CDN/WAF layers simultaneously:
+
+### Detection
+- Response headers contain BOTH `server: cloudflare` AND `via: ... cloudfront.net`
+- Or Cloudflare headers with Akamai/Fastly indicators
+- `x-amz-cf-pop` header reveals CloudFront POP location even behind Cloudflare
+
+### Implications
+- Each layer may have different caching/security rules
+- Cloudflare handles bot management (TLS fingerprinting, challenges)
+- CloudFront handles origin shielding and content delivery
+- Bypassing one layer doesn't bypass the other
+- Look for the origin server hostname in `Host` header mismatches
+
+---
+
 ## 8. Report Snippets
 
 ### Subdomain Takeover

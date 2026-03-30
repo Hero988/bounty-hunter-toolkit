@@ -336,3 +336,80 @@ Origin: https://subdomain.target.com  (any subdomain reflected?)
 
 ### WebSocket Hijacking
 > The WebSocket endpoint at `[URL]` does not validate the `Origin` header, enabling cross-site WebSocket hijacking. An attacker can establish a WebSocket connection from a malicious page visited by an authenticated user, allowing them to [send messages as the victim / subscribe to private channels / exfiltrate real-time data].
+
+---
+
+## Signed API Authentication (ECDSA / HMAC HTTP Message Signatures)
+
+Modern APIs increasingly use cryptographic request signing instead of session cookies. Common patterns:
+- `X-API-KEY` header with user's public key
+- `X-API-Signature` header with ECDSA/HMAC signature over request components
+- `X-API-Timestamp` header for replay protection
+- `X-API-Algorithm` header specifying the signing algorithm
+
+### Testing Checklist
+
+**1. Timestamp Validation**
+- [ ] Sign a request with a timestamp 30 seconds old — should pass
+- [ ] Sign with 5 minutes old — should fail (often doesn't!)
+- [ ] Sign with 1 hour old — should fail
+- [ ] Sign with 24 hours old — should fail
+- [ ] Sign with future timestamp (1 hour ahead) — should fail
+- If ANY old/future timestamps are accepted, this is CWE-294 (replay attack)
+- Reference: RFC 9421 Section 3.1 requires temporal validation
+
+**2. Algorithm Confusion**
+- [ ] Send `X-API-Algorithm: none` with dummy signature
+- [ ] Send empty `X-API-Signature` header
+- [ ] Send `X-API-Algorithm: hs256` (downgrade from ECDSA to HMAC)
+- [ ] Omit the algorithm header entirely
+- If any bypass works, this is CWE-327 (broken crypto)
+
+**3. Key/Signature Mismatch**
+- [ ] Sign with your private key but set `X-API-KEY` to a different user's public key
+- [ ] Generate a completely random key pair and sign a valid request
+- [ ] Send a valid signature from Account A but with Account B's API key
+- If data is returned for the wrong user, this is IDOR via auth bypass
+
+**4. Private Key Storage**
+- [ ] Check `localStorage` for plaintext private keys (common in SPAs)
+- [ ] Check `sessionStorage` for signing keys
+- [ ] Check if keys persist after logout (navigate to logout, then check storage)
+- [ ] Check IndexedDB for key material
+- Plaintext private keys in localStorage + XSS = persistent account takeover (key never expires unlike cookies)
+- Command: `JSON.stringify(Object.keys(localStorage).filter(k => localStorage[k].includes('key') || localStorage[k].includes('priv')))`
+
+**5. Signature Content Analysis**
+Reverse-engineer what gets signed by checking the JS bundle:
+```javascript
+// Common patterns in minified JS - search for:
+// "X-API-KEY" or "X-API-Signature" or "sign(" or ".toDER("
+// The signed message typically includes: method, URL, body hash, timestamp, algorithm
+```
+
+**6. Replay Attack PoC Template**
+```
+1. Capture a signed request (all X-API-* headers)
+2. Wait N seconds/minutes/hours
+3. Replay the EXACT same request with original headers
+4. If server returns 200 with data, timestamp is not validated
+5. Report as CWE-294 with RFC 9421 reference
+```
+
+### Where to Find Signing Keys
+| Location | How to Check |
+|----------|-------------|
+| localStorage | `JSON.parse(localStorage.getItem('shared'))` or iterate all keys |
+| sessionStorage | Same approach |
+| IndexedDB | DevTools → Application → IndexedDB |
+| JS bundle | Search for private key initialization in webpack chunks |
+| APK decompiled source | Search for `privateKey`, `secretKey`, `signingKey` |
+| Network requests | Intercept via CDP `page.on('request')` to capture headers |
+
+### Common Signing Algorithms
+| Algorithm | Library | Curve/Hash |
+|-----------|---------|------------|
+| ecdsa-secp256k1-sha256 | elliptic.js | Bitcoin-style, DER-encoded signatures |
+| ecdsa-p256-sha256 | Web Crypto API | NIST P-256 curve |
+| hmac-sha256 | crypto-js | Symmetric HMAC |
+| ed25519 | tweetnacl | EdDSA signatures |
